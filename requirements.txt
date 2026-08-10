@@ -1,0 +1,2 @@
+whisperx
+python-dotenv
