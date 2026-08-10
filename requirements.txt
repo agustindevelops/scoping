@@ -1,2 +1,8 @@
-whisperx
+# Core tooling
 python-dotenv
+whisperx
+
+# Edit pipeline
+moviepy
+pycaps
+jsonschema

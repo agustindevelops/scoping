@@ -1,4 +1,4 @@
-"""Extract speaker-labeled transcripts for every video under VIDEO_PATH using WhisperX."""
+"""Extract speaker-labeled transcripts for every video under WORKSPACE_PATH using WhisperX."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import whisperx
 from dotenv import load_dotenv
 from whisperx.diarize import DiarizationPipeline
 from whisperx.utils import get_writer
+
+from workspace_paths import EDIT_DIR_NAME, TRANSCRIPT_DIR_NAME, transcript_dir
 
 VIDEO_EXTENSIONS = {
     ".mp4",
@@ -32,6 +34,8 @@ FFMPEG_CANDIDATES = [
     Path(r"C:\ffmpeg\bin\ffmpeg.exe"),
     Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"),
 ]
+
+SKIP_DIR_NAMES = {EDIT_DIR_NAME, TRANSCRIPT_DIR_NAME, ".venv", "__pycache__"}
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -90,22 +94,31 @@ def resolve_compute_type(device: str) -> str:
     return "float16" if device == "cuda" else "int8"
 
 
-def find_videos(video_path: Path, output_dir: Path) -> list[Path]:
-    if video_path.is_file():
-        if video_path.suffix.lower() not in VIDEO_EXTENSIONS:
-            raise ValueError(f"Not a supported video file: {video_path}")
-        return [video_path]
+def _is_under_skipped_dir(path: Path, workspace: Path) -> bool:
+    try:
+        relative = path.resolve().relative_to(workspace.resolve())
+    except ValueError:
+        return False
+    return any(part in SKIP_DIR_NAMES for part in relative.parts)
 
-    if not video_path.is_dir():
-        raise FileNotFoundError(f"VIDEO_PATH does not exist: {video_path}")
+
+def find_videos(workspace: Path, output_dir: Path) -> list[Path]:
+    if workspace.is_file():
+        if workspace.suffix.lower() not in VIDEO_EXTENSIONS:
+            raise ValueError(f"Not a supported video file: {workspace}")
+        return [workspace]
+
+    if not workspace.is_dir():
+        raise FileNotFoundError(f"WORKSPACE_PATH does not exist: {workspace}")
 
     output_resolved = output_dir.resolve()
     videos = sorted(
         path
-        for path in video_path.rglob("*")
+        for path in workspace.rglob("*")
         if path.is_file()
         and path.suffix.lower() in VIDEO_EXTENSIONS
         and output_resolved not in path.resolve().parents
+        and not _is_under_skipped_dir(path, workspace)
     )
     return videos
 
@@ -182,12 +195,19 @@ def transcribe_video(
     return result
 
 
+def resolve_workspace_path() -> Path:
+    raw = os.getenv("WORKSPACE_PATH") or os.getenv("VIDEO_PATH")
+    if raw is None or not str(raw).strip():
+        raise ValueError("WORKSPACE_PATH is not set in .env")
+    return Path(str(raw).strip().strip('"').strip("'")).expanduser().resolve()
+
+
 def main() -> int:
     load_dotenv()
 
     try:
         ensure_ffmpeg()
-        video_path_value = require_env("VIDEO_PATH")
+        workspace = resolve_workspace_path()
         hf_token = require_env("HF_TOKEN")
         speaker_count = int(require_env("SPEAKER_COUNT"))
     except (ValueError, FileNotFoundError) as exc:
@@ -198,11 +218,10 @@ def main() -> int:
         print("ERROR: SPEAKER_COUNT must be >= 1", file=sys.stderr)
         return 1
 
-    video_path = Path(video_path_value).expanduser().resolve()
-    # Always write under VIDEO_PATH/transcript
-    output_dir = video_path / "transcript"
-    if video_path.is_file():
-        output_dir = video_path.parent / "transcript"
+    if workspace.is_file():
+        output_dir = workspace.parent / TRANSCRIPT_DIR_NAME
+    else:
+        output_dir = transcript_dir(workspace)
 
     model_name = os.getenv("WHISPER_MODEL", "large-v2")
     batch_size = int(
@@ -219,19 +238,34 @@ def main() -> int:
     device = resolve_device()
     compute_type = resolve_compute_type(device)
 
-    videos = find_videos(video_path, output_dir)
+    videos = find_videos(workspace if workspace.is_dir() else workspace.parent, output_dir)
+    if workspace.is_file():
+        videos = [workspace]
+
     if not videos:
-        print(f"No videos found under {video_path}")
+        print(f"No videos found under {workspace}")
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"VIDEO_PATH:     {video_path}")
+    print(f"WORKSPACE_PATH: {workspace}")
     print(f"Transcript dir: {output_dir}")
     print(f"Speakers:       {speaker_count}")
     print(f"Videos:         {len(videos)}")
+    print(f"Skip existing:  {skip_existing}")
     print(f"Model:          {model_name} ({device}, {compute_type})")
     print(f"Formats:        {', '.join(formats)}")
+
+    pending = [
+        video
+        for video in videos
+        if not (skip_existing and transcript_exists(output_dir, video.stem, formats))
+    ]
+    if skip_existing and len(pending) < len(videos):
+        print(f"Already transcribed: {len(videos) - len(pending)}")
+    if not pending:
+        print("Nothing to transcribe.")
+        return 0
 
     print("Loading WhisperX model...")
     model = whisperx.load_model(
@@ -268,13 +302,8 @@ def main() -> int:
         raise
 
     failed: list[str] = []
-    for index, video in enumerate(videos, start=1):
-        stem = video.stem
-        print(f"\n[{index}/{len(videos)}] {video.name}")
-
-        if skip_existing and transcript_exists(output_dir, stem, formats):
-            print("Skipping (already transcribed)")
-            continue
+    for index, video in enumerate(pending, start=1):
+        print(f"\n[{index}/{len(pending)}] {video.name}")
 
         try:
             result = transcribe_video(

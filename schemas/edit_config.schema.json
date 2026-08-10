@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hhais.local/schemas/edit_config.schema.json",
+  "title": "EditConfig",
+  "description": "Ordered array of edit jobs for a workspace. Paths are derived from WORKSPACE_PATH and job title.",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["title", "videos"],
+    "properties": {
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Job title; slugified to edit/{slug}/ output paths."
+      },
+      "description": {
+        "type": "string",
+        "description": "Optional overview for the edit document."
+      },
+      "labels": {
+        "type": "array",
+        "description": "Optional on-screen labels/captions on the final edited timeline (pycaps).",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "start", "end"],
+          "properties": {
+            "text": { "type": "string", "minLength": 1 },
+            "start": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "number", "minimum": 0 }
+              ]
+            },
+            "end": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "number", "minimum": 0 }
+              ]
+            }
+          }
+        }
+      },
+      "videos": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Flat ordered clip list. Each item is one cut; reorder freely across source files.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["video_path", "start", "end"],
+          "properties": {
+            "video_path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Path relative to WORKSPACE_PATH (or absolute)."
+            },
+            "title": { "type": "string" },
+            "start": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "number", "minimum": 0 }
+              ]
+            },
+            "end": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "number", "minimum": 0 }
+              ]
+            },
+            "edited_start": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "number", "minimum": 0 }
+              ],
+              "description": "Start time of this clip on the final edited timeline."
+            },
+            "edited_end": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "number", "minimum": 0 }
+              ],
+              "description": "End time of this clip on the final edited timeline."
+            },
+            "transcript_cue": { "type": "string" },
+            "description": {
+              "type": "string",
+              "description": "What this clip is / why it was taken."
+            },
+            "enabled": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

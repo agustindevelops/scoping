@@ -1,4 +1,4 @@
-"""Cut and concatenate video clips from an ordered edit config, and write an edit document."""
+"""Cut and stitch workspace edit jobs from validated configs; write edit documents."""
 
 from __future__ import annotations
 
@@ -6,67 +6,49 @@ import argparse
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
-FFMPEG_CANDIDATES = [
-    Path(r"C:\Program Files\FFM\ffmpeg.exe"),
-    Path(r"C:\ffmpeg\bin\ffmpeg.exe"),
-    Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"),
-]
+from edit_schema import load_edit_config
+from workspace_paths import (
+    edit_dir,
+    job_paths,
+    resolve_workspace_video,
+)
 
 TIME_RE = re.compile(
     r"^(?:(?P<h>\d+):)?(?P<m>\d{1,2}):(?P<s>\d{1,2})(?:[.,](?P<ms>\d{1,3}))?$"
 )
 
+LABEL_FADE_SECONDS = 0.35
+
 
 @dataclass(frozen=True)
 class Clip:
     video_path: Path
-    video_label: str
     start: float
     end: float
     title: str
     description: str
-    target_length: str
     transcript_cue: str
     index: int
+    edited_start: float
+    edited_end: float
 
     @property
     def duration(self) -> float:
         return self.end - self.start
 
 
-def ensure_ffmpeg() -> Path:
-    configured = os.getenv("FFMPEG_PATH", "").strip().strip('"').strip("'")
-    candidates: list[Path] = []
-    if configured:
-        candidates.append(Path(configured))
-
-    which = shutil.which("ffmpeg")
-    if which:
-        candidates.append(Path(which))
-
-    candidates.extend(FFMPEG_CANDIDATES)
-
-    for candidate in candidates:
-        if candidate.is_file():
-            ffmpeg_dir = str(candidate.parent)
-            path_parts = os.environ.get("PATH", "").split(os.pathsep)
-            if ffmpeg_dir not in path_parts:
-                os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
-            return candidate
-
-    raise FileNotFoundError(
-        "ffmpeg not found. Install ffmpeg or set FFMPEG_PATH in .env "
-        r'(example: FFMPEG_PATH=C:\Program Files\FFM\ffmpeg.exe)'
-    )
+@dataclass(frozen=True)
+class Label:
+    text: str
+    start: float
+    end: float
 
 
 def parse_time(value: str | int | float, *, field: str) -> float:
@@ -118,160 +100,88 @@ def format_duration(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
-def resolve_video_path(raw: str, video_root: Path | None) -> Path:
-    path = Path(raw).expanduser()
-    if not path.is_absolute() and video_root is not None:
-        path = video_root / path
-    return path.resolve()
+def resolve_workspace() -> Path:
+    raw = os.getenv("WORKSPACE_PATH") or os.getenv("VIDEO_PATH")
+    if raw is None or not str(raw).strip():
+        raise ValueError("WORKSPACE_PATH is not set in .env")
+    path = Path(str(raw).strip().strip('"').strip("'")).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"WORKSPACE_PATH does not exist: {path}")
+    if path.is_file():
+        return path.parent
+    return path
 
 
-def load_config(path: Path) -> tuple[dict, list[Clip]]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError("Config root must be a JSON object")
+def discover_config_files(workspace: Path) -> list[Path]:
+    root = edit_dir(workspace)
+    if not root.is_dir():
+        return []
+    return sorted(root.rglob("config.json"))
 
-    videos = data.get("videos")
-    if not isinstance(videos, list) or not videos:
-        raise ValueError("Config must include a non-empty 'videos' array")
 
-    video_root_raw = data.get("video_root") or os.getenv("VIDEO_PATH", "").strip()
-    video_root = Path(video_root_raw).expanduser().resolve() if video_root_raw else None
-    if video_root is not None and video_root.is_file():
-        video_root = video_root.parent
-
+def parse_job_clips(job: dict[str, Any], workspace: Path) -> list[Clip]:
     clips: list[Clip] = []
+    cursor = 0.0
     clip_index = 0
-    for video_i, video in enumerate(videos, start=1):
-        if not isinstance(video, dict):
-            raise ValueError(f"videos[{video_i - 1}] must be an object")
 
-        raw_path = video.get("video_path")
-        if not raw_path:
-            raise ValueError(f"videos[{video_i - 1}].video_path is required")
+    for item_i, item in enumerate(job["videos"], start=1):
+        if item.get("enabled") is False:
+            continue
 
-        video_path = resolve_video_path(str(raw_path), video_root)
+        video_path = resolve_workspace_video(workspace, str(item["video_path"]))
         if not video_path.is_file():
             raise FileNotFoundError(f"Video not found: {video_path}")
 
-        label = str(video.get("label") or video_path.stem)
-        timestamps = video.get("timestamps")
-        if not isinstance(timestamps, list) or not timestamps:
+        start = parse_time(item["start"], field=f"videos[{item_i - 1}].start")
+        end = parse_time(item["end"], field=f"videos[{item_i - 1}].end")
+        if end <= start:
             raise ValueError(
-                f"videos[{video_i - 1}] must include a non-empty 'timestamps' array"
+                f"videos[{item_i - 1}]: end ({item['end']}) must be after start ({item['start']})"
             )
 
-        for ts_i, item in enumerate(timestamps, start=1):
-            if not isinstance(item, dict):
-                raise ValueError(
-                    f"videos[{video_i - 1}].timestamps[{ts_i - 1}] must be an object"
-                )
-            if item.get("enabled") is False:
-                continue
-
-            start = parse_time(item["start"], field=f"timestamps[{ts_i - 1}].start")
-            end = parse_time(item["end"], field=f"timestamps[{ts_i - 1}].end")
-            if end <= start:
-                raise ValueError(
-                    f"{label} clip {ts_i}: end ({item['end']}) must be after start ({item['start']})"
-                )
-
-            clip_index += 1
-            clips.append(
-                Clip(
-                    video_path=video_path,
-                    video_label=label,
-                    start=start,
-                    end=end,
-                    title=str(item.get("title") or f"Clip {clip_index}"),
-                    description=str(item.get("description") or "").strip(),
-                    target_length=str(item.get("target_length") or "").strip(),
-                    transcript_cue=str(item.get("transcript_cue") or "").strip(),
-                    index=clip_index,
-                )
+        clip_index += 1
+        clips.append(
+            Clip(
+                video_path=video_path,
+                start=start,
+                end=end,
+                title=str(item.get("title") or f"Clip {clip_index}"),
+                description=str(item.get("description") or "").strip(),
+                transcript_cue=str(item.get("transcript_cue") or "").strip(),
+                index=clip_index,
+                edited_start=cursor,
+                edited_end=cursor + (end - start),
             )
+        )
+        cursor += end - start
 
     if not clips:
-        raise ValueError("No enabled clips found in config")
-
-    return data, clips
-
-
-def run_ffmpeg(ffmpeg: Path, args: list[str]) -> None:
-    cmd = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-y", *args]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(f"ffmpeg failed ({result.returncode}): {detail}")
+        raise ValueError("No enabled clips found in job")
+    return clips
 
 
-def cut_clip(ffmpeg: Path, clip: Clip, output: Path) -> None:
-    # Input seeking first for speed; re-encode for accurate cuts across sources.
-    run_ffmpeg(
-        ffmpeg,
-        [
-            "-ss",
-            f"{clip.start:.3f}",
-            "-to",
-            f"{clip.end:.3f}",
-            "-i",
-            str(clip.video_path),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "18",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            str(output),
-        ],
-    )
-
-
-def concat_clips(ffmpeg: Path, parts: list[Path], output: Path) -> None:
-    list_file = output.with_suffix(output.suffix + ".concat.txt")
-    lines = []
-    for part in parts:
-        escaped = part.resolve().as_posix().replace("'", r"'\''")
-        lines.append(f"file '{escaped}'")
-    list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    try:
-        run_ffmpeg(
-            ffmpeg,
-            [
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(list_file),
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                str(output),
-            ],
-        )
-    finally:
-        list_file.unlink(missing_ok=True)
+def parse_job_labels(job: dict[str, Any]) -> list[Label]:
+    labels: list[Label] = []
+    for i, item in enumerate(job.get("labels") or []):
+        start = parse_time(item["start"], field=f"labels[{i}].start")
+        end = parse_time(item["end"], field=f"labels[{i}].end")
+        if end <= start:
+            raise ValueError(
+                f"labels[{i}]: end ({item['end']}) must be after start ({item['start']})"
+            )
+        labels.append(Label(text=str(item["text"]), start=start, end=end))
+    return labels
 
 
 def write_edit_document(
-    config: dict,
+    job: dict[str, Any],
     clips: list[Clip],
+    labels: list[Label],
     output_video: Path,
     document_path: Path,
 ) -> None:
-    title = str(config.get("title") or "Video edit document")
-    overview = str(config.get("description") or "").strip()
+    title = str(job["title"])
+    overview = str(job.get("description") or "").strip()
     total = sum(clip.duration for clip in clips)
 
     lines = [
@@ -285,31 +195,27 @@ def write_edit_document(
     if overview:
         lines.extend(["## Overview", "", overview, ""])
 
+    if labels:
+        lines.extend(["## Labels", ""])
+        for label in labels:
+            lines.append(
+                f"- `{format_time(label.start)}` → `{format_time(label.end)}`: {label.text}"
+            )
+        lines.append("")
+
     lines.extend(["## Edit order", ""])
 
-    current_label = None
     for clip in clips:
-        if clip.video_label != current_label:
-            current_label = clip.video_label
-            lines.extend([f"### {current_label}", ""])
-            # Carry video-level description from config when present
-            for video in config.get("videos", []):
-                label = str(video.get("label") or Path(str(video.get("video_path", ""))).stem)
-                if label == current_label:
-                    video_desc = str(video.get("description") or "").strip()
-                    if video_desc:
-                        lines.extend([video_desc, ""])
-                    break
-
-        lines.append(f"#### {clip.index}. {clip.title}")
+        lines.append(f"### {clip.index}. {clip.title}")
         lines.append("")
+        lines.append(
+            f"- Edited timeline: `{format_time(clip.edited_start)}` → `{format_time(clip.edited_end)}`"
+        )
         lines.append(
             f"- Source: `{clip.video_path.name}` "
             f"`{format_time(clip.start)}` → `{format_time(clip.end)}` "
             f"({format_duration(clip.duration)})"
         )
-        if clip.target_length:
-            lines.append(f"- Target edited length: {clip.target_length}")
         if clip.transcript_cue:
             lines.append(f"- Transcript cue: {clip.transcript_cue}")
         if clip.description:
@@ -320,103 +226,179 @@ def write_edit_document(
     document_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def resolve_output_paths(config: dict, config_path: Path) -> tuple[Path, Path]:
-    base = config_path.parent
-    output_raw = config.get("output") or config.get("output_path") or "edited/output.mp4"
-    document_raw = (
-        config.get("document")
-        or config.get("document_path")
-        or Path(str(output_raw)).with_suffix(".md")
-    )
+def _make_label_clip(text: str, duration: float, size: tuple[int, int]):
+    from moviepy import TextClip
+    from moviepy.video.fx import CrossFadeIn, CrossFadeOut
 
-    output_path = Path(str(output_raw)).expanduser()
-    document_path = Path(str(document_raw)).expanduser()
-    if not output_path.is_absolute():
-        output_path = (base / output_path).resolve()
-    if not document_path.is_absolute():
-        document_path = (base / document_path).resolve()
-    return output_path, document_path
+    width, height = size
+    fontsize = max(28, min(64, width // 28))
+    fade = min(LABEL_FADE_SECONDS, max(0.05, duration / 3))
+
+    try:
+        txt = TextClip(
+            text=text,
+            font_size=fontsize,
+            color="white",
+            stroke_color="black",
+            stroke_width=2,
+            method="caption",
+            size=(int(width * 0.85), None),
+            text_align="center",
+            duration=duration,
+        )
+    except TypeError:
+        # Older / alternate TextClip signatures
+        txt = TextClip(
+            text,
+            fontsize=fontsize,
+            color="white",
+            stroke_color="black",
+            stroke_width=2,
+            method="caption",
+            size=(int(width * 0.85), None),
+            align="center",
+            duration=duration,
+        )
+
+    txt = txt.with_position(("center", int(height * 0.12)))
+    return txt.with_effects([CrossFadeIn(fade), CrossFadeOut(fade)])
+
+
+def render_job(
+    clips: list[Clip],
+    labels: list[Label],
+    output_video: Path,
+) -> None:
+    from moviepy import CompositeVideoClip, VideoFileClip, concatenate_videoclips
+
+    pieces = []
+    try:
+        for clip in clips:
+            source = VideoFileClip(str(clip.video_path))
+            piece = source.subclipped(clip.start, clip.end)
+            pieces.append(piece)
+
+        timeline = concatenate_videoclips(pieces, method="compose")
+
+        overlays = []
+        for label in labels:
+            duration = label.end - label.start
+            if duration <= 0:
+                continue
+            overlay = _make_label_clip(label.text, duration, timeline.size)
+            overlays.append(overlay.with_start(label.start).with_end(label.end))
+
+        final = CompositeVideoClip([timeline, *overlays]) if overlays else timeline
+
+        output_video.parent.mkdir(parents=True, exist_ok=True)
+        final.write_videofile(
+            str(output_video),
+            codec="libx264",
+            audio_codec="aac",
+            preset="veryfast",
+            ffmpeg_params=["-crf", "23", "-movflags", "+faststart"],
+            logger=None,
+        )
+    finally:
+        for piece in pieces:
+            try:
+                piece.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def process_job(job: dict[str, Any], workspace: Path) -> str:
+    """Render one job. Returns status: rendered | skipped | error message prefix unused."""
+    title = str(job["title"])
+    paths = job_paths(workspace, title)
+
+    if paths.video.is_file():
+        print(f"Skipping (output exists): {paths.video}")
+        return "skipped"
+
+    clips = parse_job_clips(job, workspace)
+    labels = parse_job_labels(job)
+
+    paths.dir.mkdir(parents=True, exist_ok=True)
+    print(f"Job:      {title}")
+    print(f"Slug:     {paths.slug}")
+    print(f"Output:   {paths.video}")
+    print(f"Document: {paths.document}")
+    print(f"Clips:    {len(clips)}")
+    print(f"Labels:   {len(labels)}")
+
+    render_job(clips, labels, paths.video)
+    write_edit_document(job, clips, labels, paths.video, paths.document)
+    print(f"Wrote {paths.video}")
+    print(f"Wrote {paths.document}")
+    return "rendered"
 
 
 def main() -> int:
     load_dotenv()
 
     parser = argparse.ArgumentParser(
-        description="Cut/concat clips from an ordered edit config and write an edit document."
+        description=(
+            "Validate workspace edit configs, stitch clips with moviepy, "
+            "and write per-job outputs under edit/{slug}/."
+        )
     )
     parser.add_argument(
         "config",
         nargs="?",
         default=os.getenv("EDIT_CONFIG", ""),
-        help="Path to edit config JSON (or set EDIT_CONFIG in .env)",
-    )
-    parser.add_argument(
-        "--keep-parts",
-        action="store_true",
-        help="Keep intermediate cut files next to the output video",
+        help="Optional path to a config.json (default: discover WORKSPACE_PATH/edit/**/config.json)",
     )
     args = parser.parse_args()
 
-    if not args.config:
-        print(
-            "ERROR: pass a config path or set EDIT_CONFIG in .env",
-            file=sys.stderr,
-        )
-        return 1
-
-    config_path = Path(args.config).expanduser().resolve()
-    if not config_path.is_file():
-        print(f"ERROR: config not found: {config_path}", file=sys.stderr)
-        return 1
-
     try:
-        ffmpeg = ensure_ffmpeg()
-        config, clips = load_config(config_path)
-        output_path, document_path = resolve_output_paths(config, config_path)
-    except (ValueError, FileNotFoundError, json.JSONDecodeError) as exc:
+        workspace = resolve_workspace()
+    except (ValueError, FileNotFoundError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"ffmpeg:   {ffmpeg}")
-    print(f"config:   {config_path}")
-    print(f"output:   {output_path}")
-    print(f"document: {document_path}")
-    print(f"clips:    {len(clips)}")
-
-    parts_dir: Path
-    temp_dir: tempfile.TemporaryDirectory[str] | None = None
-    if args.keep_parts:
-        parts_dir = output_path.parent / f"{output_path.stem}_parts"
-        parts_dir.mkdir(parents=True, exist_ok=True)
+    if args.config:
+        config_files = [Path(args.config).expanduser().resolve()]
+        missing = [path for path in config_files if not path.is_file()]
+        if missing:
+            print(f"ERROR: config not found: {missing[0]}", file=sys.stderr)
+            return 1
     else:
-        temp_dir = tempfile.TemporaryDirectory(prefix="edit_videos_")
-        parts_dir = Path(temp_dir.name)
+        config_files = discover_config_files(workspace)
+        if not config_files:
+            print(f"No edit configs found under {edit_dir(workspace)}")
+            return 0
 
-    part_files: list[Path] = []
-    try:
-        for clip in clips:
-            part = parts_dir / f"{clip.index:03d}.mp4"
-            print(
-                f"[{clip.index}/{len(clips)}] {clip.title} "
-                f"({format_time(clip.start)} → {format_time(clip.end)})"
-            )
-            cut_clip(ffmpeg, clip, part)
-            part_files.append(part)
+    print(f"WORKSPACE_PATH: {workspace}")
+    print(f"Configs:        {len(config_files)}")
 
-        print("Concatenating...")
-        concat_clips(ffmpeg, part_files, output_path)
-        write_edit_document(config, clips, output_path, document_path)
-        print(f"Wrote {output_path}")
-        print(f"Wrote {document_path}")
-        print("Done.")
-        return 0
-    except Exception as exc:  # noqa: BLE001
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    finally:
-        if temp_dir is not None:
-            temp_dir.cleanup()
+    rendered = 0
+    skipped = 0
+    failed = 0
+
+    for config_path in config_files:
+        print(f"\n=== {config_path} ===")
+        try:
+            jobs = load_edit_config(config_path)
+        except (ValueError, json.JSONDecodeError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+
+        for job in jobs:
+            try:
+                status = process_job(job, workspace)
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                print(f"ERROR ({job.get('title', '?')}): {exc}", file=sys.stderr)
+                continue
+            if status == "skipped":
+                skipped += 1
+            else:
+                rendered += 1
+
+    print(f"\nDone. rendered={rendered} skipped={skipped} failed={failed}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

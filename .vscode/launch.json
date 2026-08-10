@@ -34,13 +34,10 @@
       "justMyCode": true
     },
     {
-      "name": "FFmpeg: Edit Videos From Config",
+      "name": "Edit: Render Workspace Jobs",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/edit_videos.py",
-      "args": [
-        "${workspaceFolder}/edit_configs/meeting-backbone.json"
-      ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "python": "${workspaceFolder}/.venv/Scripts/python.exe",
