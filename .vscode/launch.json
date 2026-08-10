@@ -32,6 +32,23 @@
         "PATH": "C:\\Program Files\\FFM;${env:PATH}"
       },
       "justMyCode": true
+    },
+    {
+      "name": "FFmpeg: Edit Videos From Config",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/edit_videos.py",
+      "args": [
+        "${workspaceFolder}/edit_configs/meeting-backbone.json"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PATH": "C:\\Program Files\\FFM;${env:PATH}"
+      },
+      "justMyCode": true
     }
   ]
 }

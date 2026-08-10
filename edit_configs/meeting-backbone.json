@@ -1,0 +1,151 @@
+{
+  "title": "Meeting backbone — warehouse inventory scoping",
+  "description": "Video 1 is the backbone of the meeting section because it contains the “why are we even building this?” story. Video 2 refines requirements, constraints, and scope. Source ranges are pulled from WhisperX transcripts; tighten start/end further toward each target_length as needed.",
+  "video_root": "C:\\Users\\agust\\Videos\\warehouse-inventory-system",
+  "output": "../edited/meeting-backbone.mp4",
+  "document": "../edited/meeting-backbone.md",
+  "videos": [
+    {
+      "video_path": "2026-08-05 14-52-57.mp4",
+      "label": "Video 1 — 2026-08-05 14-52-57",
+      "description": "Most of the story/problem definition lives here. Expect roughly 5–6 minutes to survive the edit.",
+      "timestamps": [
+        {
+          "title": "Series/project hook — taking an idea to production in under 24 hours",
+          "start": "00:01:39.378",
+          "end": "00:02:04.485",
+          "target_length": "0:25–0:40",
+          "transcript_cue": "“In this series…” through “wish us luck.”",
+          "description": "Establishes the series premise and deadline challenge."
+        },
+        {
+          "title": "Why the project matters personally — Aniah is anxious, stepped away from business, wants to get back into it",
+          "start": "00:02:24.398",
+          "end": "00:02:51.792",
+          "target_length": "0:15–0:30",
+          "transcript_cue": "“How are you feeling?” section",
+          "description": "Personal stakes before the business problem."
+        },
+        {
+          "title": "The core business problem — inquiry → availability check → quote → mistakes → two-hour trip for glasses",
+          "start": "00:03:17.546",
+          "end": "00:05:55.196",
+          "target_length": "1:30–2:00",
+          "transcript_cue": "Inquiry / quote / warehouse mismatch / two-hour drive for glasses",
+          "description": "Strongest stakeholder clip. Source range is longer than target — trim middle if needed."
+        },
+        {
+          "title": "You restate the problem + propose the first solution",
+          "start": "00:06:03.436",
+          "end": "00:07:21.287",
+          "target_length": "1:00–1:30",
+          "transcript_cue": "“Desired result is a client can click buy…” → warehouse grid/locations/app",
+          "description": "Problem restatement into first proposed solution shape."
+        },
+        {
+          "title": "Second problem emerges: “I don't even know what I have”",
+          "start": "00:09:39.268",
+          "end": "00:09:57.983",
+          "target_length": "0:20–0:35",
+          "transcript_cue": "Inventory/catalog problem",
+          "description": "Catalog/inventory blindness as a second problem."
+        },
+        {
+          "title": "You recognize there are actually two flows and narrow this project",
+          "start": "00:10:01.404",
+          "end": "00:10:57.797",
+          "target_length": "0:40–0:60",
+          "transcript_cue": "Customer booking vs. cataloging/WMS",
+          "description": "Narrows scope to WMS/cataloging for this project."
+        },
+        {
+          "title": "Usability requirement — “make it dummy proof,” very streamlined",
+          "start": "00:12:15.910",
+          "end": "00:12:53.214",
+          "target_length": "0:35–0:50",
+          "transcript_cue": "“make it dummy proof” / one-click / streamlined",
+          "description": "Important UX requirement for the cataloging app."
+        }
+      ]
+    },
+    {
+      "video_path": "2026-08-05 15-18-39.mp4",
+      "label": "Video 2 — 2026-08-05 15-18-39",
+      "description": "Requirements refinement, correcting assumptions, constraints, and scope creep. Aim for about 3–4 minutes.",
+      "timestamps": [
+        {
+          "title": "Mobile vs. desktop assumption gets challenged",
+          "start": "00:00:01.134",
+          "end": "00:01:53.277",
+          "target_length": "0:50–1:20",
+          "transcript_cue": "You propose interfaces → Aniah says she pulls inventory from her phone",
+          "description": "Assumption correction that reshapes mobile vs web roles."
+        },
+        {
+          "title": "Mobile becomes streamlined; web becomes detailed management",
+          "start": "00:03:21.416",
+          "end": "00:04:01.140",
+          "target_length": "0:30–0:45",
+          "transcript_cue": "Photo/title/quantity on mobile; descriptions/pricing/etc. later on web",
+          "description": "Split of responsibilities between app and web."
+        },
+        {
+          "title": "Employee requirement creates roles + pick/return workflow",
+          "start": "00:04:02.405",
+          "end": "00:05:18.893",
+          "target_length": "0:35–0:50",
+          "transcript_cue": "Broken/missing glasses → employees only need pick/return access",
+          "description": "Introduces Admin vs Staff roles and pick/return."
+        },
+        {
+          "title": "Project constraints — 24 hours, $0, quality can come later",
+          "start": "00:06:10.612",
+          "end": "00:06:30.518",
+          "target_length": "0:20–0:35",
+          "transcript_cue": "24 hours / zero dollars / quality later",
+          "description": "Establishes the challenge constraints."
+        },
+        {
+          "title": "Acceptance criteria recap",
+          "start": "00:06:36.681",
+          "end": "00:07:31.502",
+          "target_length": "0:30–0:45",
+          "transcript_cue": "Admin, Staff, mobile, web, detailed records",
+          "description": "Acceptance criteria snapshot before scope creep."
+        },
+        {
+          "title": "Scope-creep montage — calendar",
+          "start": "00:09:11.238",
+          "end": "00:09:56.623",
+          "target_length": "0:20–0:40 total montage",
+          "transcript_cue": "Calendar view discussion",
+          "description": "Montage beat 1/3. Compress with the next two for humor/education — do not keep the whole discussion."
+        },
+        {
+          "title": "Scope-creep montage — overbooking",
+          "start": "00:10:45.085",
+          "end": "00:11:05.892",
+          "target_length": "0:20–0:40 total montage",
+          "transcript_cue": "“Basically, you want to be able to overbook items.”",
+          "description": "Montage beat 2/3."
+        },
+        {
+          "title": "Scope-creep montage — substitutions",
+          "start": "00:12:10.207",
+          "end": "00:12:47.106",
+          "target_length": "0:20–0:40 total montage",
+          "transcript_cue": "Recommended substitution / customer flow",
+          "description": "Montage beat 3/3. Consider disabling some beats if the montage runs long."
+        },
+        {
+          "title": "Meeting conclusion",
+          "start": "00:15:18.835",
+          "end": "00:15:39.629",
+          "target_length": "0:15–0:25",
+          "transcript_cue": "“This gives me a really good starting point…” → app/web/barcodes/warehouse diagram",
+          "description": "Clean close on next actions."
+        }
+      ]
+    }
+  ]
+}
