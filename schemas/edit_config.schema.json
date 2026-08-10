@@ -13,7 +13,7 @@
       "title": {
         "type": "string",
         "minLength": 1,
-        "description": "Job title; slugified to edit/{slug}/ output paths."
+        "description": "Job title; slugified for the output mp4/md basename inside the existing edit folder."
       },
       "description": {
         "type": "string",

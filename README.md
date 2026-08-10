@@ -10,10 +10,10 @@ workspace/
   transcript/
   edit/
     notes.csv                 # optional
-    {slug}/
+    the-scope/                # you name this folder
       config.json             # array of edit jobs (validated by schemas/edit_config.schema.json)
-      {slug}.mp4
-      {slug}.md
+      {title-slug}.mp4        # filename from config title
+      {title-slug}.md
 ```
 
 ## Commands
@@ -22,10 +22,10 @@ workspace/
 # Transcribe new videos only (skips existing transcript outputs)
 .venv/Scripts/python.exe transcribe_videos.py
 
-# Render all edit/**/config.json jobs (skips if {slug}.mp4 already exists)
+# Render all edit/**/config.json jobs (skips if output mp4 already exists)
 .venv/Scripts/python.exe edit_videos.py
 ```
 
-Job output paths come from `workspace_paths.job_paths(workspace, title)` — never hard-code project names in the tooling repo.
+The edit folder name is yours (`edit/the-scope/`). Output basenames come from `workspace_paths.job_paths(job_dir, title)` using the job `title` in `config.json` — the tooling never renames your folder.
 
 Edit configs use a flat `videos` array (each item is one clip with its own `video_path`), so you can interleave sources freely. Job-level `labels` are reserved for on-screen captions (pycaps).

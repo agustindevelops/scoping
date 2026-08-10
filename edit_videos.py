@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,19 @@ TIME_RE = re.compile(
 )
 
 LABEL_FADE_SECONDS = 0.35
+
+
+def log(message: str = "") -> None:
+    print(message, flush=True)
+
+
+def format_elapsed(seconds: float) -> str:
+    seconds = max(0, int(round(seconds)))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:d}:{secs:02d}"
 
 
 @dataclass(frozen=True)
@@ -271,66 +285,129 @@ def render_job(
 ) -> None:
     from moviepy import CompositeVideoClip, VideoFileClip, concatenate_videoclips
 
+    total_clips = len(clips)
+    total_duration = sum(clip.duration for clip in clips)
+    started = time.perf_counter()
     pieces = []
+    sources: list[Any] = []
+
+    log(
+        f"\n[1/4] Cutting {total_clips} clips "
+        f"(~{format_duration(total_duration)} total source length)..."
+    )
     try:
-        for clip in clips:
+        cut_started = time.perf_counter()
+        for index, clip in enumerate(clips, start=1):
+            clip_started = time.perf_counter()
+            remaining = total_clips - index + 1
+            log(
+                f"  [{index}/{total_clips}] {clip.title} "
+                f"({format_duration(clip.duration)}) "
+                f"from `{clip.video_path.name}` "
+                f"{format_time(clip.start)} → {format_time(clip.end)} "
+                f"| remaining clips: {remaining}"
+            )
             source = VideoFileClip(str(clip.video_path))
+            sources.append(source)
             piece = source.subclipped(clip.start, clip.end)
             pieces.append(piece)
+            log(
+                f"       done in {format_elapsed(time.perf_counter() - clip_started)} "
+                f"(elapsed {format_elapsed(time.perf_counter() - cut_started)})"
+            )
 
+        log(
+            f"[1/4] Cuts finished in {format_elapsed(time.perf_counter() - cut_started)}"
+        )
+
+        log("[2/4] Concatenating timeline...")
+        concat_started = time.perf_counter()
         timeline = concatenate_videoclips(pieces, method="compose")
+        log(
+            f"[2/4] Concatenate done in "
+            f"{format_elapsed(time.perf_counter() - concat_started)} "
+            f"(timeline ~{format_duration(float(timeline.duration or total_duration))})"
+        )
 
+        log(f"[3/4] Applying {len(labels)} label overlay(s)...")
+        label_started = time.perf_counter()
         overlays = []
-        for label in labels:
+        for label_i, label in enumerate(labels, start=1):
             duration = label.end - label.start
             if duration <= 0:
                 continue
+            log(
+                f"  label [{label_i}/{len(labels)}] "
+                f"{format_time(label.start)} → {format_time(label.end)}: {label.text}"
+            )
             overlay = _make_label_clip(label.text, duration, timeline.size)
             overlays.append(overlay.with_start(label.start).with_end(label.end))
-
         final = CompositeVideoClip([timeline, *overlays]) if overlays else timeline
+        log(
+            f"[3/4] Labels done in {format_elapsed(time.perf_counter() - label_started)}"
+        )
 
         output_video.parent.mkdir(parents=True, exist_ok=True)
+        log(
+            f"[4/4] Encoding `{output_video.name}` "
+            f"(~{format_duration(float(final.duration or total_duration))})..."
+        )
+        encode_started = time.perf_counter()
         final.write_videofile(
             str(output_video),
             codec="libx264",
             audio_codec="aac",
             preset="veryfast",
             ffmpeg_params=["-crf", "23", "-movflags", "+faststart"],
-            logger=None,
+            logger="bar",
         )
+        log(
+            f"[4/4] Encode finished in "
+            f"{format_elapsed(time.perf_counter() - encode_started)}"
+        )
+        log(f"Render complete in {format_elapsed(time.perf_counter() - started)}")
     finally:
         for piece in pieces:
             try:
                 piece.close()
             except Exception:  # noqa: BLE001
                 pass
+        for source in sources:
+            try:
+                source.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
-def process_job(job: dict[str, Any], workspace: Path) -> str:
-    """Render one job. Returns status: rendered | skipped | error message prefix unused."""
+def process_job(job: dict[str, Any], workspace: Path, config_path: Path) -> str:
+    """Render one job into the folder that contains its config.json."""
     title = str(job["title"])
-    paths = job_paths(workspace, title)
+    job_dir = config_path.parent
+    paths = job_paths(job_dir, title)
 
     if paths.video.is_file():
-        print(f"Skipping (output exists): {paths.video}")
+        log(f"Skipping (output exists): {paths.video}")
         return "skipped"
 
     clips = parse_job_clips(job, workspace)
     labels = parse_job_labels(job)
+    total_duration = sum(clip.duration for clip in clips)
 
-    paths.dir.mkdir(parents=True, exist_ok=True)
-    print(f"Job:      {title}")
-    print(f"Slug:     {paths.slug}")
-    print(f"Output:   {paths.video}")
-    print(f"Document: {paths.document}")
-    print(f"Clips:    {len(clips)}")
-    print(f"Labels:   {len(labels)}")
+    log(f"Job:      {title}")
+    log(f"Folder:   {paths.dir}")
+    log(f"Output:   {paths.video}")
+    log(f"Document: {paths.document}")
+    log(f"Clips:    {len(clips)}")
+    log(f"Labels:   {len(labels)}")
+    log(f"Length:   ~{format_duration(total_duration)}")
 
+    job_started = time.perf_counter()
     render_job(clips, labels, paths.video)
+    log("[doc] Writing edit document...")
     write_edit_document(job, clips, labels, paths.video, paths.document)
-    print(f"Wrote {paths.video}")
-    print(f"Wrote {paths.document}")
+    log(f"Wrote {paths.video}")
+    log(f"Wrote {paths.document}")
+    log(f"Job finished in {format_elapsed(time.perf_counter() - job_started)}")
     return "rendered"
 
 
@@ -366,18 +443,20 @@ def main() -> int:
     else:
         config_files = discover_config_files(workspace)
         if not config_files:
-            print(f"No edit configs found under {edit_dir(workspace)}")
+            log(f"No edit configs found under {edit_dir(workspace)}")
             return 0
 
-    print(f"WORKSPACE_PATH: {workspace}")
-    print(f"Configs:        {len(config_files)}")
+    run_started = time.perf_counter()
+    log(f"WORKSPACE_PATH: {workspace}")
+    log(f"Configs:        {len(config_files)}")
 
     rendered = 0
     skipped = 0
     failed = 0
+    total_jobs = 0
 
     for config_path in config_files:
-        print(f"\n=== {config_path} ===")
+        log(f"\n=== {config_path} ===")
         try:
             jobs = load_edit_config(config_path)
         except (ValueError, json.JSONDecodeError) as exc:
@@ -385,9 +464,11 @@ def main() -> int:
             failed += 1
             continue
 
-        for job in jobs:
+        total_jobs += len(jobs)
+        for job_i, job in enumerate(jobs, start=1):
+            log(f"\n--- Job {job_i}/{len(jobs)} ---")
             try:
-                status = process_job(job, workspace)
+                status = process_job(job, workspace, config_path)
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 print(f"ERROR ({job.get('title', '?')}): {exc}", file=sys.stderr)
@@ -397,7 +478,10 @@ def main() -> int:
             else:
                 rendered += 1
 
-    print(f"\nDone. rendered={rendered} skipped={skipped} failed={failed}")
+    log(
+        f"\nDone in {format_elapsed(time.perf_counter() - run_started)}. "
+        f"jobs={total_jobs} rendered={rendered} skipped={skipped} failed={failed}"
+    )
     return 1 if failed else 0
 
 

@@ -13,6 +13,12 @@ TRANSCRIPT_DIR_NAME = "transcript"
 
 @dataclass(frozen=True)
 class JobPaths:
+    """Paths for one edit job.
+
+    `dir` is the existing edit folder that contains config.json (user-named).
+    `slug` / video / document filenames are derived from the job title in config.
+    """
+
     slug: str
     dir: Path
     video: Path
@@ -21,7 +27,7 @@ class JobPaths:
 
 
 def slugify_title(title: str) -> str:
-    """Lowercase kebab-case safe folder/file stem from a job title."""
+    """Lowercase kebab-case safe file stem from a job title."""
     normalized = unicodedata.normalize("NFKD", title)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     lowered = ascii_text.lower().strip()
@@ -32,11 +38,14 @@ def slugify_title(title: str) -> str:
     return slug
 
 
-def job_paths(workspace: Path, title: str) -> JobPaths:
-    """Resolve edit/{slug}/ paths for a job title under the workspace."""
-    workspace = workspace.expanduser().resolve()
+def job_paths(job_dir: Path, title: str) -> JobPaths:
+    """Resolve export paths inside an existing edit job folder.
+
+    The folder name is owned by the user (e.g. edit/the-scope/).
+    Only the output basename comes from the config title.
+    """
+    job_dir = job_dir.expanduser().resolve()
     slug = slugify_title(title)
-    job_dir = workspace / EDIT_DIR_NAME / slug
     return JobPaths(
         slug=slug,
         dir=job_dir,
